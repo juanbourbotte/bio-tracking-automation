@@ -10,7 +10,12 @@ from src.config import (
     PIXEL_SIZE_UM,
     CELL_AREA_UM2,
 )
-from src.ingestion import load_vertical_excel
+from src.ingestion import (
+    read_raw_dataframe,
+    inspect_columns,
+    load_vertical_excel,
+    LABELS_MAP,
+)
 from src.pipeline import quantify_fusion_fission
 from src.stats_engine import calculate_condition_statistics
 from src.reporting import export_results_excel, generate_plots
@@ -18,18 +23,10 @@ from src.reporting import export_results_excel, generate_plots
 st.set_page_config(page_title="Vesicle Tracking Pipeline", layout="wide")
 st.title("🔬 Automated Vesicle Tracking & Bio-Image Analytics Pipeline")
 
-# Barra lateral: Configuración de Canales y Parámetros
-st.sidebar.header("🏷️ Configuración de Marcadores / Canales")
-channel_a = st.sidebar.text_input(
-    "Canal / Proteína A",
-    value="Cav1",
-    help="Texto que identifica la primera población en la columna 'Population' (ej: Cav1, Rab5, Clathrin)",
-)
-channel_b = st.sidebar.text_input(
-    "Canal / Proteína B",
-    value="EEA1",
-    help="Texto que identifica la segunda población en la columna 'Population' (ej: EEA1, Rab7, Lamp1)",
-)
+# Sidebar
+st.sidebar.header("🏷️ Configuración de Marcadores")
+channel_a = st.sidebar.text_input("Canal / Proteína A", value="Cav1")
+channel_b = st.sidebar.text_input("Canal / Proteína B", value="EEA1")
 
 st.sidebar.header("⚙️ Parámetros Espacio-Temporales")
 dist_thresh = st.sidebar.slider(
@@ -43,13 +40,13 @@ max_gap = st.sidebar.slider(
 )
 
 uploaded_files = st.file_uploader(
-    "Carga uno o más archivos Excel/CSV de tracking (soporta múltiples condiciones)",
+    "Carga uno o más archivos Excel/CSV de tracking",
     type=["xlsx", "xls", "csv"],
     accept_multiple_files=True,
 )
 
 if uploaded_files:
-    st.subheader("Archivos Cargados y Detección de Condiciones")
+    st.subheader("Archivos Cargados y Verificación de Estructura")
     valid_data_list = []
 
     for file in uploaded_files:
@@ -58,15 +55,55 @@ if uploaded_files:
             bytes_io = io.BytesIO(file_bytes)
             bytes_io.name = file.name
 
+            df_raw = read_raw_dataframe(bytes_io)
+            df_mapped, missing = inspect_columns(df_raw)
+
+            custom_mapping = {}
+
+            # Si faltan columnas, solicitar asignación manual
+            if missing:
+                st.warning(
+                    f"⚠️ **{file.name}**: No se detectaron automáticamente algunas columnas requeridas. Asígnalas manualmente a continuación:"
+                )
+
+                cols_in_file = ["-- Seleccionar --"] + list(df_raw.columns)
+                col_cols = st.columns(len(missing))
+
+                for idx, miss_col in enumerate(missing):
+                    with col_cols[idx]:
+                        label = LABELS_MAP.get(miss_col, miss_col)
+                        selected = st.selectbox(
+                            f"Mapear '{label}':",
+                            cols_in_file,
+                            key=f"{file.name}_{miss_col}",
+                        )
+                        if selected != "-- Seleccionar --":
+                            custom_mapping[miss_col] = selected
+
+                # Re-inspeccionar tras el mapeo del usuario
+                _, still_missing = inspect_columns(
+                    df_raw, custom_col_map=custom_mapping
+                )
+                if still_missing:
+                    st.info(
+                        f"☝️ Selecciona las columnas faltantes para continuar con **{file.name}**."
+                    )
+                    continue
+
+            # Carga final del dataset
+            bytes_io.seek(0)
             c1, c2 = load_vertical_excel(
-                bytes_io, channel_a=channel_a, channel_b=channel_b
+                bytes_io,
+                channel_a=channel_a,
+                channel_b=channel_b,
+                custom_col_map=custom_mapping if custom_mapping else None,
             )
             detected_cond = (
                 c1["CONDITION"].iloc[0] if not c1.empty else "Desconocido"
             )
 
             st.success(
-                f"📁 **{file.name}** -> Condición: `{detected_cond}` | Detectados: **{len(c1):,}** filas ({channel_a}), **{len(c2):,}** filas ({channel_b})"
+                f"✅ **{file.name}** -> Condición: `{detected_cond}` | Filas: **{len(c1):,}** ({channel_a}), **{len(c2):,}** ({channel_b})"
             )
             valid_data_list.append((c1, c2))
 
@@ -75,11 +112,10 @@ if uploaded_files:
                 f_out.write(file_bytes)
 
         except Exception as e:
-            st.error(f"❌ Error al leer el archivo **{file.name}**: {str(e)}")
+            st.error(f"❌ Error al procesar **{file.name}**: {str(e)}")
 
     if valid_data_list:
         st.markdown("---")
-
         if st.button("🚀 Ejecutar Análisis Comparativo", type="primary"):
             with st.spinner(
                 "Ejecutando pipeline vectorial y pruebas estadísticas..."
