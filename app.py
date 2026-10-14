@@ -23,20 +23,47 @@ from src.reporting import export_results_excel, generate_plots
 st.set_page_config(page_title="Vesicle Tracking Pipeline", layout="wide")
 st.title("🔬 Automated Vesicle Tracking & Bio-Image Analytics Pipeline")
 
-# Sidebar
+# --- BARRA LATERAL: CONFIGURACIÓN DE CANALES, PARÁMETROS Y CALIBRACIÓN ---
 st.sidebar.header("🏷️ Configuración de Marcadores")
 channel_a = st.sidebar.text_input("Canal / Proteína A", value="Cav1")
 channel_b = st.sidebar.text_input("Canal / Proteína B", value="EEA1")
 
 st.sidebar.header("⚙️ Parámetros Espacio-Temporales")
 dist_thresh = st.sidebar.slider(
-    "Umbral de distancia (µm)", 0.1, 1.0, DISTANCE_THRESHOLD
+    "Umbral de distancia (µm)", 0.1, 1.0, float(DISTANCE_THRESHOLD)
 )
 min_frames = st.sidebar.slider(
-    "Frames mín. de contacto", 1, 10, MIN_COLOC_FRAMES
+    "Frames mín. de contacto", 1, 10, int(MIN_COLOC_FRAMES)
 )
 max_gap = st.sidebar.slider(
-    "Tolerancia de parpadeo (frames)", 0, 5, MAX_FRAME_GAP
+    "Tolerancia de parpadeo (frames)", 0, 5, int(MAX_FRAME_GAP)
+)
+
+st.sidebar.header("🔬 Calibración del Microscopio")
+time_interval = st.sidebar.number_input(
+    "Paso de tiempo (Δt en segundos)",
+    min_value=0.01,
+    max_value=60.0,
+    value=float(TIME_INTERVAL_SEC),
+    step=0.1,
+    help="Intervalo de tiempo transcurrido entre fotogramas consecutivos.",
+)
+pixel_size = st.sidebar.number_input(
+    "Tamaño de Pixel / Factor de Escala (µm/px)",
+    min_value=0.001,
+    max_value=10.0,
+    value=float(PIXEL_SIZE_UM),
+    step=0.01,
+    format="%.3f",
+    help="Factor de conversión de píxeles a micrómetros (usar 1.0 si los datos ya están en µm).",
+)
+cell_area = st.sidebar.number_input(
+    "Área Celular Promedio (µm²)",
+    min_value=1.0,
+    max_value=10000.0,
+    value=float(CELL_AREA_UM2),
+    step=10.0,
+    help="Área celular de referencia para calcular la frecuencia de eventos normalizada.",
 )
 
 uploaded_files = st.file_uploader(
@@ -60,7 +87,6 @@ if uploaded_files:
 
             custom_mapping = {}
 
-            # Si faltan columnas, solicitar asignación manual
             if missing:
                 st.warning(
                     f"⚠️ **{file.name}**: No se detectaron automáticamente algunas columnas requeridas. Asígnalas manualmente a continuación:"
@@ -80,7 +106,6 @@ if uploaded_files:
                         if selected != "-- Seleccionar --":
                             custom_mapping[miss_col] = selected
 
-                # Re-inspeccionar tras el mapeo del usuario
                 _, still_missing = inspect_columns(
                     df_raw, custom_col_map=custom_mapping
                 )
@@ -90,7 +115,6 @@ if uploaded_files:
                     )
                     continue
 
-            # Carga final del dataset
             bytes_io.seek(0)
             c1, c2 = load_vertical_excel(
                 bytes_io,
@@ -132,9 +156,9 @@ if uploaded_files:
                     dist_thresh,
                     min_frames,
                     max_gap,
-                    PIXEL_SIZE_UM,
-                    TIME_INTERVAL_SEC,
-                    CELL_AREA_UM2,
+                    pixel_size,     # <-- Pasa el tamaño de pixel configurado en la UI
+                    time_interval,  # <-- Pasa el Δt configurado en la UI
+                    cell_area,      # <-- Pasa el área celular configurada en la UI
                 )
                 stats_df = calculate_condition_statistics(
                     summary_df, events_df
