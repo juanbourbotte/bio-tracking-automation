@@ -18,6 +18,30 @@ from src.reporting import export_results_excel, generate_plots
 st.set_page_config(page_title="Vesicle Tracking Pipeline", layout="wide")
 st.title("🔬 Automated Vesicle Tracking & Bio-Image Analytics Pipeline")
 
+# Barra lateral: Configuración de Canales y Parámetros
+st.sidebar.header("🏷️ Configuración de Marcadores / Canales")
+channel_a = st.sidebar.text_input(
+    "Canal / Proteína A",
+    value="Cav1",
+    help="Texto que identifica la primera población en la columna 'Population' (ej: Cav1, Rab5, Clathrin)",
+)
+channel_b = st.sidebar.text_input(
+    "Canal / Proteína B",
+    value="EEA1",
+    help="Texto que identifica la segunda población en la columna 'Population' (ej: EEA1, Rab7, Lamp1)",
+)
+
+st.sidebar.header("⚙️ Parámetros Espacio-Temporales")
+dist_thresh = st.sidebar.slider(
+    "Umbral de distancia (µm)", 0.1, 1.0, DISTANCE_THRESHOLD
+)
+min_frames = st.sidebar.slider(
+    "Frames mín. de contacto", 1, 10, MIN_COLOC_FRAMES
+)
+max_gap = st.sidebar.slider(
+    "Tolerancia de parpadeo (frames)", 0, 5, MAX_FRAME_GAP
+)
+
 uploaded_files = st.file_uploader(
     "Carga uno o más archivos Excel/CSV de tracking (soporta múltiples condiciones)",
     type=["xlsx", "xls", "csv"],
@@ -25,19 +49,7 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    st.sidebar.header("Parámetros de Análisis Espacio-Temporal")
-    dist_thresh = st.sidebar.slider(
-        "Umbral de distancia (µm)", 0.1, 1.0, DISTANCE_THRESHOLD
-    )
-    min_frames = st.sidebar.slider(
-        "Frames mín. de contacto", 1, 10, MIN_COLOC_FRAMES
-    )
-    max_gap = st.sidebar.slider(
-        "Tolerancia de parpadeo (frames)", 0, 5, MAX_FRAME_GAP
-    )
-
     st.subheader("Archivos Cargados y Detección de Condiciones")
-
     valid_data_list = []
 
     for file in uploaded_files:
@@ -46,13 +58,15 @@ if uploaded_files:
             bytes_io = io.BytesIO(file_bytes)
             bytes_io.name = file.name
 
-            c1, c2 = load_vertical_excel(bytes_io)
+            c1, c2 = load_vertical_excel(
+                bytes_io, channel_a=channel_a, channel_b=channel_b
+            )
             detected_cond = (
                 c1["CONDITION"].iloc[0] if not c1.empty else "Desconocido"
             )
 
             st.success(
-                f"📁 **{file.name}** -> Condición asignada: `{detected_cond}` ({len(c1):,} filas Cav1, {len(c2):,} filas EEA1)"
+                f"📁 **{file.name}** -> Condición: `{detected_cond}` | Detectados: **{len(c1):,}** filas ({channel_a}), **{len(c2):,}** filas ({channel_b})"
             )
             valid_data_list.append((c1, c2))
 
@@ -66,7 +80,6 @@ if uploaded_files:
     if valid_data_list:
         st.markdown("---")
 
-        # Botón para detonar el cálculo y guardar en session_state
         if st.button("🚀 Ejecutar Análisis Comparativo", type="primary"):
             with st.spinner(
                 "Ejecutando pipeline vectorial y pruebas estadísticas..."
@@ -100,7 +113,6 @@ if uploaded_files:
                 )
                 generate_plots(summary_df, events_df, stats_df, out_dir)
 
-                # Persistir los resultados en la sesión de Streamlit
                 st.session_state["analyzed"] = True
                 st.session_state["summary_df"] = summary_df
                 st.session_state["events_df"] = events_df
@@ -110,7 +122,6 @@ if uploaded_files:
 
             st.balloons()
 
-        # Renderizar vista si el análisis ya fue calculado
         if st.session_state.get("analyzed", False):
             st.success("¡Análisis comparativo disponible!")
 

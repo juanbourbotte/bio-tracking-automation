@@ -13,8 +13,8 @@ def infer_condition_from_filename(filename):
         clean_name = os.path.splitext(os.path.basename(base_name))[0]
         return clean_name if clean_name else "Control"
 
-def load_vertical_excel(file_or_path, default_condition=None):
-    """Carga archivos Excel/CSV desde ruta (str), BytesIO u UploadedFile, asigna condición y separa canales."""
+def load_vertical_excel(file_or_path, default_condition=None, channel_a="Cav1", channel_b="EEA1"):
+    """Carga archivos Excel/CSV, asigna condición y separa los 2 canales definidos por el usuario."""
     
     if isinstance(file_or_path, str):
         file_name = file_or_path
@@ -60,10 +60,11 @@ def load_vertical_excel(file_or_path, default_condition=None):
             else ("Control" if any(k in str(x).lower() for k in ["ctrl", "control"]) else (inferred if x in ["", "nan", "None"] else x))
         )
 
-    df_cav1 = df[df["POPULATION"].astype(str).str.contains("cav", case=False, na=False)].copy()
-    df_eea1 = df[df["POPULATION"].astype(str).str.contains("eea", case=False, na=False)].copy()
+    # Filtrado dinámico según las etiquetas elegidas por el usuario
+    df_a = df[df["POPULATION"].astype(str).str.contains(channel_a, case=False, na=False)].copy()
+    df_b = df[df["POPULATION"].astype(str).str.contains(channel_b, case=False, na=False)].copy()
 
-    return df_cav1, df_eea1
+    return df_a, df_b
 
 def clean_trackmate_df(df):
     """Valida tipos de datos numéricos y remueve coordenadas incompletas."""
