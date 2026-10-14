@@ -63,10 +63,6 @@ cell_area = st.sidebar.number_input(
     step=10.0,
 )
 
-# --- INICIALIZAR ESTADO DE SESIÓN ---
-if "files_payload" not in st.session_state:
-    st.session_state["files_payload"] = []
-
 # --- SECCIÓN DE CARGA DE DATOS ---
 col_upload, col_sample = st.columns([3, 1])
 
@@ -79,18 +75,11 @@ with col_upload:
 
 with col_sample:
     st.write("¿No tienes datos a mano?")
-    btn_sample = st.button("🧪 Cargar datos de prueba (1-clic)", type="secondary")
+    use_sample = st.button("🧪 Cargar datos de prueba (1-clic)", type="secondary")
 
-# Lógica de actualización persistente en session_state
-if uploaded_files:
-    st.session_state["files_payload"] = []
-    for f in uploaded_files:
-        content = f.getvalue()
-        buf = io.BytesIO(content)
-        buf.name = f.name
-        st.session_state["files_payload"].append(buf)
+files_to_process = []
 
-elif btn_sample:
+if use_sample:
     sample_dir = "sample_data"
     if os.path.exists(sample_dir):
         sample_paths = [
@@ -98,29 +87,28 @@ elif btn_sample:
             for f in os.listdir(sample_dir)
             if f.endswith((".xlsx", ".csv"))
         ]
-        st.session_state["files_payload"] = []
         for sp in sample_paths:
             with open(sp, "rb") as f:
                 content = f.read()
                 buf = io.BytesIO(content)
                 buf.name = os.path.basename(sp)
-                st.session_state["files_payload"].append(buf)
+                files_to_process.append(buf)
         st.toast("¡Datos de prueba cargados correctamente!", icon="🧪")
     else:
         st.error("No se encontró la carpeta sample_data/.")
 
-files_to_process = st.session_state["files_payload"]
+elif uploaded_files:
+    files_to_process = uploaded_files
 
 if files_to_process:
     st.subheader("Archivos Cargados y Verificación de Estructura")
     valid_data_list = []
 
-    for file_buf in files_to_process:
+    for file in files_to_process:
         try:
-            file_buf.seek(0)
-            file_bytes = file_buf.read()
+            file_bytes = file.getvalue() if hasattr(file, "getvalue") else file.read()
             bytes_io = io.BytesIO(file_bytes)
-            bytes_io.name = getattr(file_buf, "name", "dataset.xlsx")
+            bytes_io.name = file.name
 
             df_raw = read_raw_dataframe(bytes_io)
             df_mapped, missing = inspect_columns(df_raw)
@@ -129,7 +117,7 @@ if files_to_process:
 
             if missing:
                 st.warning(
-                    f"⚠️ **{bytes_io.name}**: No se detectaron automáticamente algunas columnas requeridas. Asígnalas manualmente:"
+                    f"⚠️ **{file.name}**: No se detectaron automáticamente algunas columnas requeridas. Asígnalas manualmente:"
                 )
                 cols_in_file = ["-- Seleccionar --"] + list(df_raw.columns)
                 col_cols = st.columns(len(missing))
@@ -140,7 +128,7 @@ if files_to_process:
                         selected = st.selectbox(
                             f"Mapear '{label}':",
                             cols_in_file,
-                            key=f"{bytes_io.name}_{miss_col}",
+                            key=f"{file.name}_{miss_col}",
                         )
                         if selected != "-- Seleccionar --":
                             custom_mapping[miss_col] = selected
@@ -149,7 +137,7 @@ if files_to_process:
                     df_raw, custom_col_map=custom_mapping
                 )
                 if still_missing:
-                    st.info(f"☝️ Selecciona las columnas faltantes para continuar con **{bytes_io.name}**.")
+                    st.info(f"☝️ Selecciona las columnas faltantes para continuar con **{file.name}**.")
                     continue
 
             bytes_io.seek(0)
@@ -164,55 +152,52 @@ if files_to_process:
             )
 
             st.success(
-                f"✅ **{bytes_io.name}** -> Condición: `{detected_cond}` | Filas: **{len(c1):,}** ({channel_a}), **{len(c2):,}** ({channel_b})"
+                f"✅ **{file.name}** -> Condición: `{detected_cond}` | Filas: **{len(c1):,}** ({channel_a}), **{len(c2):,}** ({channel_b})"
             )
             valid_data_list.append((c1, c2))
 
             os.makedirs("data/raw", exist_ok=True)
-            with open(os.path.join("data/raw", bytes_io.name), "wb") as f_out:
+            with open(os.path.join("data/raw", file.name), "wb") as f_out:
                 f_out.write(file_bytes)
 
         except Exception as e:
-            st.error(f"❌ Error al procesar **{getattr(file_buf, 'name', 'archivo')}**: {str(e)}")
+            st.error(f"❌ Error al procesar **{file.name}**: {str(e)}")
 
     if valid_data_list:
         st.markdown("---")
         if st.button("🚀 Ejecutar Análisis Comparativo", type="primary"):
             with st.spinner("Ejecutando pipeline vectorial y pruebas estadísticas..."):
-                all_pop_a = [item[0] for item in valid_data_list if not item[0].empty]
-                all_pop_b = [item[1] for item in valid_data_list if not item[1].empty]
+                all_cav1 = [item[0] for item in valid_data_list]
+                all_eea1 = [item[1] for item in valid_data_list]
 
-                if not all_pop_a or not all_pop_b:
-                    st.error(f"❌ No se encontraron datos válidos para los canales '{channel_a}' y/o '{channel_b}'. Revisa los nombres asignados en la barra lateral.")
-                else:
-                    combined_pop_a = pd.concat(all_pop_a, ignore_index=True)
-                    combined_pop_b = pd.concat(all_pop_b, ignore_index=True)
+                combined_cav1 = pd.concat(all_cav1, ignore_index=True)
+                combined_eea1 = pd.concat(all_eea1, ignore_index=True)
 
-                    summary_df, events_df, coloc_df = quantify_fusion_fission(
-                        combined_pop_a,
-                        combined_pop_b,
-                        dist_thresh,
-                        min_frames,
-                        max_gap,
-                        pixel_size,
-                        time_interval,
-                        cell_area,
-                    )
-                    stats_df = calculate_condition_statistics(summary_df, events_df)
+                summary_df, events_df, coloc_df = quantify_fusion_fission(
+                    combined_cav1,
+                    combined_eea1,
+                    dist_thresh,
+                    min_frames,
+                    max_gap,
+                    pixel_size,
+                    time_interval,
+                    cell_area,
+                )
+                stats_df = calculate_condition_statistics(summary_df, events_df)
 
-                    out_dir = "data/processed"
-                    out_excel = os.path.join(out_dir, "Resultados_Cuantificacion.xlsx")
-                    export_results_excel(summary_df, events_df, coloc_df, stats_df, out_excel)
-                    generate_plots(summary_df, events_df, stats_df, out_dir)
+                out_dir = "data/processed"
+                out_excel = os.path.join(out_dir, "Resultados_Cuantificacion.xlsx")
+                export_results_excel(summary_df, events_df, coloc_df, stats_df, out_excel)
+                generate_plots(summary_df, events_df, stats_df, out_dir)
 
-                    st.session_state["analyzed"] = True
-                    st.session_state["summary_df"] = summary_df
-                    st.session_state["events_df"] = events_df
-                    st.session_state["coloc_df"] = coloc_df
-                    st.session_state["stats_df"] = stats_df
-                    st.session_state["out_excel"] = out_excel
+                st.session_state["analyzed"] = True
+                st.session_state["summary_df"] = summary_df
+                st.session_state["events_df"] = events_df
+                st.session_state["coloc_df"] = coloc_df
+                st.session_state["stats_df"] = stats_df
+                st.session_state["out_excel"] = out_excel
 
-                    st.balloons()
+            st.balloons()
 
         if st.session_state.get("analyzed", False):
             st.success("¡Análisis comparativo disponible!")
